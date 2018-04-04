@@ -193,6 +193,16 @@ void OS_Windows::initialize_core() {
 	IP_Unix::make_default();
 
 	cursor_shape = CURSOR_ARROW;
+
+	RAWINPUTDEVICE Rid[1];
+	Rid[0].usUsagePage = 0x01;
+	Rid[0].usUsage = 0x02;
+	Rid[0].dwFlags = 0;
+	Rid[0].hwndTarget = 0;
+
+	if (RegisterRawInputDevices(Rid, 1, sizeof(Rid[0])) == FALSE) {
+		printf("Err..");
+	}
 }
 
 bool OS_Windows::can_draw() const {
@@ -330,6 +340,25 @@ LRESULT OS_Windows::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 			//force_quit=true;
 			return 0; // Jump Back
 		}
+		case WM_INPUT: {
+			UINT dwSize;
+			GetRawInputData((HRAWINPUT)lParam, RID_INPUT, NULL, &dwSize, sizeof(RAWINPUTHEADER));
+			LPBYTE lpb = new BYTE[dwSize];
+			GetRawInputData((HRAWINPUT)lParam, RID_INPUT, lpb, &dwSize, sizeof(RAWINPUTHEADER));
+			RAWINPUT* raw = (RAWINPUT*)lpb;
+
+			if (raw->header.dwType == RIM_TYPEMOUSE && mouse_mode == MOUSE_MODE_CAPTURED) {
+				Ref<InputEventMouseMotion> mm;
+				mm.instance();
+
+				mm->set_relative(Vector2(raw->data.mouse.lLastX, raw->data.mouse.lLastY));
+				if (window_has_focus && main_loop)
+					input->parse_input_event(mm);
+			}
+
+			delete[] lpb;
+
+		} break;
 		case WM_MOUSELEAVE: {
 
 			old_invalid = true;
@@ -399,24 +428,6 @@ LRESULT OS_Windows::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 			mm->set_position(Vector2(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)));
 			mm->set_global_position(Vector2(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)));
 
-			if (mouse_mode == MOUSE_MODE_CAPTURED) {
-
-				Point2i c(video_mode.width / 2, video_mode.height / 2);
-				old_x = c.x;
-				old_y = c.y;
-
-				if (mm->get_position() == c) {
-					center = c;
-					return 0;
-				}
-
-				Point2i ncenter = mm->get_position();
-				center = ncenter;
-				POINT pos = { (int)c.x, (int)c.y };
-				ClientToScreen(hWnd, &pos);
-				SetCursorPos(pos.x, pos.y);
-			}
-
 			input->set_mouse_position(mm->get_position());
 			mm->set_speed(input->get_last_mouse_speed());
 
@@ -427,7 +438,6 @@ LRESULT OS_Windows::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 				old_invalid = false;
 			}
 
-			mm->set_relative(Vector2(mm->get_position() - Vector2(old_x, old_y)));
 			old_x = mm->get_position().x;
 			old_y = mm->get_position().y;
 			if (window_has_focus && main_loop)
@@ -1289,8 +1299,6 @@ void OS_Windows::set_mouse_mode(MouseMode p_mode) {
 		center = Point2i(video_mode.width / 2, video_mode.height / 2);
 		POINT pos = { (int)center.x, (int)center.y };
 		ClientToScreen(hWnd, &pos);
-		if (mouse_mode == MOUSE_MODE_CAPTURED)
-			SetCursorPos(pos.x, pos.y);
 	} else {
 		ReleaseCapture();
 		ClipCursor(NULL);
